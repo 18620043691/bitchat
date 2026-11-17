@@ -2,7 +2,7 @@
 
 This document specifies the Source-Based Routing extension (v2) for the BitChat protocol. This upgrade enables efficient unicast routing across the mesh by allowing senders to specify an explicit path of intermediate relays.
 
-**Status:** Implemented in Android and iOS: both decode routed packets, forward along routes, and originate routes. iOS origination is policy-gated (see §8). Backward compatible (v1 clients never receive routed frames from iOS: routes are only originated when every node on the path has been observed speaking v2).
+**Status:** iOS decodes and forwards routed packets and may originate routes when its policy allows (see §8). Android decodes and forwards routed v2 packets but currently originates v1 packets only. Backward compatible: iOS does not originate routed frames unless every node on the path has been observed speaking v2.
 
 ---
 
