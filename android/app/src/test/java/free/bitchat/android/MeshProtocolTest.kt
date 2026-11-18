@@ -85,7 +85,14 @@ class MeshProtocolTest {
 
         assertEquals(jpeg.hex(), MeshFilePacket.decode(file.encode())?.content?.hex())
         assertEquals("img_test.jpg", MeshFilePacket.decode(file.encode())?.fileName)
-        assertEquals(null, MeshFilePacket.decode(MeshFilePacket("bad.png", "image/png", jpeg).encode()))
+        val mismatchedMimePayload = byteArrayOf(0x01, 0x00, 0x07) +
+            "bad.png".toByteArray() +
+            byteArrayOf(0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x03) +
+            byteArrayOf(0x03, 0x00, 0x09) +
+            "image/png".toByteArray() +
+            byteArrayOf(0x04, 0x00, 0x00, 0x00, 0x03) +
+            jpeg
+        assertEquals(null, MeshFilePacket.decode(mismatchedMimePayload))
     }
 
     @Test
