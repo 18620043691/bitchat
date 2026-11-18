@@ -19,12 +19,47 @@ internal data class MeshPacket(
     val isRsr: Boolean = false
 )
 
+internal object PrivateMessageCodec {
+    fun encode(messageId: String, content: String): ByteArray? {
+        val id = messageId.toByteArray(Charsets.UTF_8)
+        val text = content.toByteArray(Charsets.UTF_8)
+        if (id.size > 255 || text.size > 255) return null
+        return byteArrayOf(0x00, id.size.toByte()) + id +
+            byteArrayOf(0x01, text.size.toByte()) + text
+    }
+
+    fun decode(payload: ByteArray): Pair<String, String>? {
+        var offset = 0
+        var id: String? = null
+        var content: String? = null
+        while (offset < payload.size) {
+            if (offset + 2 > payload.size) return null
+            val type = payload[offset++].toInt() and 0xFF
+            val length = payload[offset++].toInt() and 0xFF
+            if (offset + length > payload.size) return null
+            val value = payload.copyOfRange(offset, offset + length)
+            offset += length
+            val decoded = value.toString(Charsets.UTF_8).takeIf { it.toByteArray(Charsets.UTF_8).contentEquals(value) }
+                ?: return null
+            when (type) {
+                0x00 -> if (id == null) id = decoded else return null
+                0x01 -> if (content == null) content = decoded else return null
+                else -> return null
+            }
+        }
+        return (id ?: return null) to (content ?: return null)
+    }
+}
+
 internal object MeshMessageType {
     const val ANNOUNCE = 0x01
     const val MESSAGE = 0x02
     const val FRAGMENT = 0x20
     const val REQUEST_SYNC = 0x21
     const val FILE_TRANSFER = 0x22
+    const val NOISE_HANDSHAKE = 0x10
+    const val NOISE_ENCRYPTED = 0x11
+    const val GROUP_MESSAGE = 0x25
 }
 
 internal data class MeshFilePacket(

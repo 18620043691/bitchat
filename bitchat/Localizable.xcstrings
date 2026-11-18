@@ -68090,6 +68090,86 @@
         }
       }
     },
+    "groups.action.create" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Create group" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "创建群组" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "建立群組" } }
+      }
+    },
+    "groups.action.invite" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invite member" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "邀请成员" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "邀請成員" } }
+      }
+    },
+    "groups.action.leave" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Leave group" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出群组" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "退出群組" } }
+      }
+    },
+    "groups.action.remove" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove member" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移除成员" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "移除成員" } }
+      }
+    },
+    "groups.accessibility.manage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Manage group" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "管理群组" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "管理群組" } }
+      }
+    },
+    "groups.confirm.leave" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Leave “%@” and remove it from this device?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出“%@”群组并从此设备中移除？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "退出「%@」群組並從此裝置移除？" } }
+      }
+    },
+    "groups.empty" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No groups yet" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "还没有群组" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "尚無群組" } }
+      }
+    },
+    "groups.field.name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Group name" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "群组名称" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "群組名稱" } }
+      }
+    },
+    "groups.field.nickname" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby member nickname" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "附近成员昵称" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "附近成員暱稱" } }
+      }
+    },
+    "groups.remove.warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Removing a member rotates the group key so they cannot read future messages." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移除成员会轮换群密钥，确保对方无法读取之后的消息。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "移除成員會輪換群組金鑰，確保對方無法讀取之後的訊息。" } }
+      }
+    },
     "groups.member_count %@" : {
       "extractionState" : "manual",
       "localizations" : {

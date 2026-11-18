@@ -293,6 +293,16 @@ internal class BleMeshTransport(
         engine.noteLocalImage(packet, localPath)
     }
 
+    fun sendSecurePacket(packet: MeshPacket): Boolean {
+        require(packet.type == MeshMessageType.NOISE_HANDSHAKE || packet.type == MeshMessageType.NOISE_ENCRYPTED)
+        return sendPacket(packet)
+    }
+
+    fun sendGroupPacket(packet: MeshPacket): Boolean {
+        require(packet.type == MeshMessageType.GROUP_MESSAGE)
+        return sendPacket(packet)
+    }
+
     fun changeNickname(nickname: String) {
         engine.setNickname(nickname)
         sendPacket(engine.announcePacket())
@@ -509,7 +519,14 @@ internal class BleMeshTransport(
     private fun encodeForTransport(packet: MeshPacket): List<ByteArray> {
         val fullFrame = MeshPacketCodec.encode(packet) ?: return emptyList()
         if (fullFrame.size <= MAX_LINK_FRAME_BYTES) return listOf(fullFrame)
-        if (packet.type !in setOf(MeshMessageType.MESSAGE, MeshMessageType.FILE_TRANSFER)) return emptyList()
+        if (packet.type !in setOf(
+                MeshMessageType.MESSAGE,
+                MeshMessageType.FILE_TRANSFER,
+                MeshMessageType.GROUP_MESSAGE,
+                MeshMessageType.NOISE_HANDSHAKE,
+                MeshMessageType.NOISE_ENCRYPTED
+            )
+        ) return emptyList()
         val chunkSize = FRAGMENT_CHUNK_BYTES
         val total = (fullFrame.size + chunkSize - 1) / chunkSize
         if (total !in 1..MAX_FRAGMENT_COUNT) return emptyList()

@@ -110,6 +110,14 @@ class MeshProtocolTest {
     }
 
     @Test
+    fun privateMessageTlvMatchesTheIosCanonicalEncoding() {
+        val encoded = PrivateMessageCodec.encode("id", "hi")
+        assertEquals("0002696401026869", encoded?.hex())
+        assertEquals("id" to "hi", encoded?.let(PrivateMessageCodec::decode))
+        assertEquals(null, PrivateMessageCodec.decode(byteArrayOf(0x00, 0x03, 0x41)))
+    }
+
+    @Test
     fun releaseMetadataSignatureRejectsPayloadTampering() {
         val privateKey = org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(SecureRandom())
         val payload = """{"version":"2.0.0"}""".toByteArray()

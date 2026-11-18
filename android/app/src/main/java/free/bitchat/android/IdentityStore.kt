@@ -26,6 +26,7 @@ internal data class MeshIdentity(
 ) {
     val peerId: ByteArray = MessageDigest.getInstance("SHA-256").digest(noisePublic).copyOfRange(0, 8)
     val peerIdHex: String = peerId.hex()
+    val noiseFingerprint: String = MessageDigest.getInstance("SHA-256").digest(noisePublic).hex()
 
     fun sign(message: ByteArray): ByteArray {
         val signer = Ed25519Signer()
@@ -123,6 +124,20 @@ internal class IdentityStore(context: Context) {
         val encrypted = Base64.encodeToString(encrypt(bytes), Base64.NO_WRAP)
         check(prefs.edit().putString("encryptedPeerPins", encrypted).commit()) {
             "Unable to persist the peer signing-key pin."
+        }
+    }
+
+    @Synchronized
+    fun loadEncryptedGroupData(): ByteArray? {
+        val saved = prefs.getString("encryptedGroups", null) ?: return null
+        return decrypt(Base64.decode(saved, Base64.NO_WRAP))
+    }
+
+    @Synchronized
+    fun saveEncryptedGroupData(data: ByteArray) {
+        val encrypted = Base64.encodeToString(encrypt(data), Base64.NO_WRAP)
+        check(prefs.edit().putString("encryptedGroups", encrypted).commit()) {
+            "Unable to persist encrypted group data."
         }
     }
 

@@ -14,7 +14,11 @@ data class MeshChatMessage(
     val text: String,
     val timestamp: Long,
     val isLocal: Boolean,
-    val imagePath: String? = null
+    val imagePath: String? = null,
+    val conversationId: String? = null,
+    val isPrivate: Boolean = false,
+    val isGroup: Boolean = false,
+    val messageId: String? = null
 )
 
 data class MeshImageTransfer(
@@ -41,7 +45,9 @@ internal class MeshProtocolEngine(
     private val nowMs: () -> Long = System::currentTimeMillis,
     initialSigningKeys: Map<String, ByteArray> = emptyMap(),
     private val onPeerPinned: (String, ByteArray) -> Unit = { _, _ -> },
-    private val onImage: (MeshImageTransfer) -> Unit = {}
+    private val onImage: (MeshImageTransfer) -> Unit = {},
+    private val onNoisePacket: (MeshPacket, ByteArray) -> Boolean = { _, _ -> false },
+    private val onGroupPacket: (MeshPacket) -> Unit = {}
 ) {
     private data class Announcement(val nickname: String, val noiseKey: ByteArray, val signingKey: ByteArray)
     private data class FragmentSet(
@@ -52,6 +58,7 @@ internal class MeshProtocolEngine(
     )
 
     private val signingKeys = initialSigningKeys.mapValuesTo(mutableMapOf()) { it.value.copyOf() }
+    private val noiseKeys = mutableMapOf<String, ByteArray>()
     private val nicknames = mutableMapOf<String, String>()
     private val addressPeers = mutableMapOf<String, String>()
     private val seen = LinkedHashMap<String, Unit>()
@@ -76,6 +83,12 @@ internal class MeshProtocolEngine(
 
     fun addressesForPeer(peerId: String): Set<String> =
         addressPeers.filterValues { it == peerId }.keys
+
+    fun cryptoIdentity(peerId: String): Pair<ByteArray, ByteArray>? {
+        val noiseKey = noiseKeys[peerId] ?: return null
+        val signingKey = signingKeys[peerId] ?: return null
+        return noiseKey.copyOf() to signingKey.copyOf()
+    }
 
     fun announcePacket(): MeshPacket {
         val nicknameBytes = nickname().toByteArray(Charsets.UTF_8)
@@ -165,6 +178,9 @@ internal class MeshProtocolEngine(
             MeshMessageType.MESSAGE -> if (!acceptMessage(packet)) return
             MeshMessageType.FILE_TRANSFER -> if (!acceptImage(packet)) return
             MeshMessageType.FRAGMENT -> if (!receiveFragment(packet)) return
+            MeshMessageType.NOISE_HANDSHAKE, MeshMessageType.NOISE_ENCRYPTED ->
+                if (!acceptNoisePacket(packet)) return
+            MeshMessageType.GROUP_MESSAGE -> if (!acceptGroupPacket(packet)) return
             else -> return
         }
 
@@ -188,6 +204,9 @@ internal class MeshProtocolEngine(
             onPeerPinned(peerId, announcement.signingKey.copyOf())
             signingKeys[peerId] = announcement.signingKey.copyOf()
         }
+        val existingNoiseKey = noiseKeys[peerId]
+        if (existingNoiseKey != null && !existingNoiseKey.contentEquals(announcement.noiseKey)) return false
+        noiseKeys[peerId] = announcement.noiseKey.copyOf()
         nicknames[peerId] = announcement.nickname
         if (packet.ttl == DEFAULT_TTL) {
             val linkOwner = addressPeers[ingressAddress]
@@ -195,6 +214,27 @@ internal class MeshProtocolEngine(
             addressPeers[ingressAddress] = peerId
         }
         publishPeers()
+        return true
+    }
+
+    private fun acceptNoisePacket(packet: MeshPacket): Boolean {
+        val recipient = packet.recipientId ?: return false
+        if (
+            recipient.size != 8 ||
+            packet.payload.isEmpty() ||
+            packet.payload.size > MAX_NOISE_PACKET_BYTES ||
+            !timestampIsCurrent(packet.timestamp)
+        ) return false
+        val peerId = packet.senderId.hex()
+        val noiseKey = noiseKeys[peerId] ?: return false
+        return !recipient.contentEquals(identity.peerId) || onNoisePacket(packet, noiseKey.copyOf())
+    }
+
+    private fun acceptGroupPacket(packet: MeshPacket): Boolean {
+        if (packet.recipientId != null || packet.payload.isEmpty() || packet.payload.size > MAX_GROUP_PACKET_BYTES ||
+            !timestampIsCurrent(packet.timestamp)
+        ) return false
+        onGroupPacket(packet)
         return true
     }
 
@@ -241,7 +281,13 @@ internal class MeshProtocolEngine(
         if (
             total !in 1..MAX_FRAGMENTS ||
             index >= total ||
-            originalType !in setOf(MeshMessageType.MESSAGE, MeshMessageType.FILE_TRANSFER)
+            originalType !in setOf(
+                MeshMessageType.MESSAGE,
+                MeshMessageType.FILE_TRANSFER,
+                MeshMessageType.GROUP_MESSAGE,
+                MeshMessageType.NOISE_HANDSHAKE,
+                MeshMessageType.NOISE_ENCRYPTED
+            )
         ) return false
         if (!remember("fragment:${packet.senderId.hex()}:$id:$index")) return false
 
@@ -272,6 +318,15 @@ internal class MeshProtocolEngine(
             val accepted = when (original.type) {
                 MeshMessageType.MESSAGE -> acceptMessage(original)
                 MeshMessageType.FILE_TRANSFER -> acceptImage(original)
+                MeshMessageType.GROUP_MESSAGE -> {
+                    if (original.recipientId != null || !timestampIsCurrent(original.timestamp)) false
+                    else {
+                        onGroupPacket(original)
+                        true
+                    }
+                }
+                MeshMessageType.NOISE_HANDSHAKE, MeshMessageType.NOISE_ENCRYPTED ->
+                    acceptNoisePacket(original)
                 else -> false
             }
             if (!accepted) return false
@@ -401,5 +456,7 @@ internal class MeshProtocolEngine(
         private const val MAX_ASSEMBLIES = 32
         private const val MAX_REASSEMBLED_BYTES = 1_048_576
         private const val FRAGMENT_LIFETIME_MS = 60_000L
+        private const val MAX_NOISE_PACKET_BYTES = 16_384
+        private const val MAX_GROUP_PACKET_BYTES = 65_535
     }
 }

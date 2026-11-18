@@ -278,6 +278,35 @@ struct ChatGroupCoordinatorContextTests {
     }
 
     @Test
+    func explicitMissingGroupDoesNotFallBackToSelectedGroup() throws {
+        let (context, coordinator, joined) = try makeJoinedGroup()
+        let result = coordinator.leaveGroup(in: PeerID(str: "ffffffffffffffff"))
+
+        if case .error(let message) = result {
+            #expect(message == String(localized: "system.group.not_in_group"))
+        } else {
+            #expect(Bool(false))
+        }
+        expectUnchanged(context, joined: joined)
+    }
+
+    @Test
+    func leavingUnselectedGroupDoesNotEndAnotherChat() throws {
+        let context = MockChatGroupContext(identity: me)
+        let coordinator = ChatGroupCoordinator(context: context)
+        let group = try #require(context.groupStore.createGroup(named: "other group", creator: me.member))
+        let selectedPeer = PeerID(str: "ffffffffffffffff")
+        context.selectedPrivateChatPeer = selectedPeer
+
+        coordinator.leaveGroup(in: group.peerID)
+
+        #expect(context.endPrivateChatCount == 0)
+        #expect(context.removedPrivateChats == [group.peerID])
+        #expect(context.groupStore.group(withID: group.groupID) == nil)
+        #expect(context.selectedPrivateChatPeer == selectedPeer)
+    }
+
+    @Test
     func staleCreatorStateIsRejectedIncludingStaleRemoval() throws {
         let (context, coordinator, joined) = try makeJoinedGroup()
 

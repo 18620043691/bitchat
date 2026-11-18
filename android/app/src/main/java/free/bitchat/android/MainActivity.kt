@@ -45,6 +45,11 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
     private lateinit var transcript: LinearLayout
     private lateinit var transcriptScroll: ScrollView
     private lateinit var messageInput: EditText
+    private lateinit var roomCategory: TextView
+    private lateinit var roomTitle: TextView
+    private lateinit var roomDescription: TextView
+    private lateinit var privateChatAction: TextView
+    private lateinit var groupAction: TextView
     private var meshService: MeshForegroundService? = null
     private var bound = false
     private var photoAction = PhotoAction.NONE
@@ -53,6 +58,12 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
     private var pendingImage: Pair<String, ByteArray>? = null
     private val updateManager by lazy { AndroidUpdateManager(this) }
     private val transcriptMessages = ArrayDeque<MeshChatMessage>()
+    private val privateConversations = mutableMapOf<String, ArrayDeque<MeshChatMessage>>()
+    private val groupConversations = mutableMapOf<String, ArrayDeque<MeshChatMessage>>()
+    private var currentPeers: List<MeshPeer> = emptyList()
+    private var selectedPrivatePeer: MeshPeer? = null
+    private var selectedGroup: MeshGroup? = null
+    private var pendingConversationId: String? = null
 
     private enum class PhotoAction { NONE, PROFILE, SEND }
 
@@ -60,6 +71,7 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val localBinder = service as? MeshForegroundService.LocalBinder ?: return
             meshService = localBinder.service()
+            meshService?.setAppVisible(true)
             meshService?.addListener(this@MainActivity)
             pendingImage?.let { (fileName, bytes) ->
                 pendingImage = null
@@ -73,14 +85,23 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             meshService?.removeListener(this@MainActivity)
+            meshService?.setAppVisible(false)
             meshService = null
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingConversationId = intent?.getStringExtra("conversation_id")
         createUi()
         requestMeshPermissions()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingConversationId = intent?.getStringExtra("conversation_id")
+        openPendingConversation()
     }
 
     override fun onStart() {
@@ -90,6 +111,7 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
 
     override fun onStop() {
         meshService?.removeListener(this)
+        meshService?.setAppVisible(false)
         if (bound) unbindService(serviceConnection)
         bound = false
         meshService = null
@@ -102,6 +124,7 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
     }
 
     override fun onPeersChanged(peers: List<MeshPeer>) {
+        currentPeers = peers
         members.text = if (peers.isEmpty()) {
             "No nearby peers yet"
         } else {
@@ -109,6 +132,19 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
                 peer.nickname + if (peer.connected) "" else " (away)"
             }
         }
+        selectedPrivatePeer?.let { selected ->
+            selectedPrivatePeer = peers.firstOrNull { it.id == selected.id } ?: selected
+            updateRoomHeader()
+        }
+        privateChatAction.text = if (selectedPrivatePeer == null && selectedGroup == null) "Start a private chat" else "Back to Nearby"
+        privateChatAction.setOnClickListener {
+            if (selectedPrivatePeer == null && selectedGroup == null) showPeerPicker() else showNearbyRoom()
+        }
+        groupAction.text = if (selectedGroup == null) "Groups" else "Manage group"
+        groupAction.setOnClickListener {
+            if (selectedGroup == null) showGroupPicker() else showGroupManagement()
+        }
+        openPendingConversation()
     }
 
     override fun onLinkCountChanged(count: Int) {
@@ -124,6 +160,28 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
         while (transcriptMessages.size > MAX_TRANSCRIPT_MESSAGES) transcriptMessages.removeFirst()
         renderTranscript()
         transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    override fun onPrivateMessage(message: MeshChatMessage) {
+        val conversationId = message.conversationId ?: return
+        val messages = privateConversations.getOrPut(conversationId) { ArrayDeque() }
+        messages.addLast(message)
+        while (messages.size > MAX_TRANSCRIPT_MESSAGES) messages.removeFirst()
+        if (selectedPrivatePeer?.id == conversationId) {
+            renderTranscript()
+            transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
+    }
+
+    override fun onGroupMessage(message: MeshChatMessage) {
+        val conversationId = message.conversationId ?: return
+        val messages = groupConversations.getOrPut(conversationId) { ArrayDeque() }
+        messages.addLast(message)
+        while (messages.size > MAX_TRANSCRIPT_MESSAGES) messages.removeFirst()
+        if (selectedGroup?.conversationId == conversationId) {
+            renderTranscript()
+            transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
     }
 
     private fun createUi() {
@@ -172,23 +230,26 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
             background = rounded(0xEFFFFFFF.toInt(), dp(22), 0xFFFFFFFF.toInt())
             elevation = dp(5).toFloat()
         }
-        channelCard.addView(TextView(this).apply {
+        roomCategory = TextView(this).apply {
             text = "Nearby"
             textSize = 12f
             setTextColor(0xFF5373AD.toInt())
-        })
-        channelCard.addView(TextView(this).apply {
+        }
+        channelCard.addView(roomCategory)
+        roomTitle = TextView(this).apply {
             text = "Shared mesh chat"
             textSize = 20f
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
             setTextColor(0xFF172331.toInt())
             setPadding(0, dp(2), 0, dp(3))
-        })
-        channelCard.addView(TextView(this).apply {
+        }
+        channelCard.addView(roomTitle)
+        roomDescription = TextView(this).apply {
             text = "One public room across nearby BitChat devices"
             textSize = 13f
             setTextColor(0xFF788397.toInt())
-        })
+        }
+        channelCard.addView(roomDescription)
         status = TextView(this).apply {
             text = "Requesting Bluetooth permission…"
             textSize = 12f
@@ -203,6 +264,24 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
             maxLines = 2
         }
         channelCard.addView(members)
+        privateChatAction = TextView(this).apply {
+            text = "Start a private chat"
+            textSize = 13f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(0xFF315FC4.toInt())
+            setPadding(0, dp(10), 0, 0)
+            setOnClickListener { showPeerPicker() }
+        }
+        channelCard.addView(privateChatAction)
+        groupAction = TextView(this).apply {
+            text = "Groups"
+            textSize = 13f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(0xFF315FC4.toInt())
+            setPadding(0, dp(7), 0, 0)
+            setOnClickListener { showGroupPicker() }
+        }
+        channelCard.addView(groupAction)
         root.addView(channelCard)
 
         transcript = LinearLayout(this).apply {
@@ -263,7 +342,14 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
 
     private fun renderTranscript() {
         transcript.removeAllViews()
-        transcriptMessages.forEach { message ->
+        val selectedPeer = selectedPrivatePeer
+        val selectedGroup = selectedGroup
+        val messages = when {
+            selectedGroup != null -> groupConversations[selectedGroup.conversationId] ?: emptyList()
+            selectedPeer != null -> privateConversations[selectedPeer.id] ?: emptyList()
+            else -> transcriptMessages
+        }
+        messages.forEach { message ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = if (message.isLocal) Gravity.END else Gravity.START
@@ -463,6 +549,10 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
     }
 
     private fun choosePhoto(action: PhotoAction) {
+        if (action == PhotoAction.SEND && (selectedPrivatePeer != null || selectedGroup != null)) {
+            status.text = "Private and group image sharing is not available yet"
+            return
+        }
         photoAction = action
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -599,9 +689,16 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
         val text = messageInput.text.toString().trim()
         if (text.isEmpty()) return
         try {
-            meshService?.sendText(text) ?: run {
+            val service = meshService ?: run {
                 status.text = "Bluetooth mesh is still starting"
                 return
+            }
+            val peer = selectedPrivatePeer
+            val group = selectedGroup
+            when {
+                group != null -> service.sendGroupText(group.groupId, text)
+                peer != null -> service.sendPrivateText(peer.id, text)
+                else -> service.sendText(text)
             }
             messageInput.text.clear()
         } catch (error: IllegalArgumentException) {
@@ -609,6 +706,216 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
         } catch (error: IllegalStateException) {
             status.text = error.message ?: "Bluetooth mesh is unavailable"
         }
+    }
+
+    private fun showPeerPicker() {
+        val peers = currentPeers
+        if (peers.isEmpty()) {
+            status.text = "No nearby peers are available for private chat yet"
+            return
+        }
+        val options = peers.map { peer ->
+            peer.nickname + if (peer.connected) "" else " (away)"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Private chat")
+            .setItems(options) { _, index -> peers.getOrNull(index)?.let(::openPrivateChat) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showGroupPicker() {
+        val groups = meshService?.groups().orEmpty()
+        val options = listOf("Create a group…") + groups.map { "#${it.name}  ·  ${it.members.size} members" }
+        AlertDialog.Builder(this)
+            .setTitle("Groups")
+            .setItems(options.toTypedArray()) { _, index ->
+                if (index == 0) showCreateGroupDialog() else groups.getOrNull(index - 1)?.let(::openGroupChat)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showCreateGroupDialog() {
+        val name = EditText(this).apply {
+            hint = "Group name"
+            setSingleLine(true)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Create group")
+            .setView(name)
+            .setPositiveButton("Create") { _, _ ->
+                try {
+                    val group = meshService?.createGroup(name.text.toString())
+                        ?: throw IllegalStateException("Bluetooth mesh is still starting")
+                    openGroupChat(group)
+                } catch (error: Exception) {
+                    status.text = error.message ?: "Could not create group"
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openGroupChat(group: MeshGroup) {
+        selectedPrivatePeer = null
+        selectedGroup = group
+        updateRoomHeader()
+        privateChatAction.text = "Back to Nearby"
+        privateChatAction.setOnClickListener { showNearbyRoom() }
+        groupAction.text = "Manage group"
+        groupAction.setOnClickListener { showGroupManagement() }
+        messageInput.hint = "Message #${group.name}"
+        renderTranscript()
+        transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun showGroupManagement() {
+        val group = selectedGroup ?: return showGroupPicker()
+        val isCreator = group.creatorFingerprint == meshService?.localFingerprint()
+        val actions = if (isCreator) {
+            arrayOf("Invite a nearby peer", "Remove a member", "Leave group")
+        } else {
+            arrayOf("Leave group")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("#${group.name}")
+            .setItems(actions) { _, index ->
+                when {
+                    isCreator && index == 0 -> showGroupInvitePicker(group)
+                    isCreator && index == 1 -> showGroupRemovePicker(group)
+                    else -> confirmLeaveGroup(group)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showGroupRemovePicker(group: MeshGroup) {
+        val members = group.members.filter { it.fingerprint != group.creatorFingerprint }
+        if (members.isEmpty()) {
+            status.text = "There are no other group members to remove"
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Remove from #${group.name}")
+            .setItems(members.map { it.nickname }.toTypedArray()) { _, index ->
+                members.getOrNull(index)?.let { member ->
+                    try {
+                        meshService?.removeGroupMember(group.groupId, member.fingerprint)
+                        meshService?.groups()?.firstOrNull { it.groupId.contentEquals(group.groupId) }
+                            ?.let(::openGroupChat)
+                    } catch (error: Exception) {
+                        status.text = error.message ?: "Could not remove group member"
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showGroupInvitePicker(group: MeshGroup) {
+        if (group.creatorFingerprint != meshService?.localFingerprint()) {
+            status.text = "Only the group creator can invite members"
+            return
+        }
+        val peers = currentPeers.filter { it.connected }
+        if (peers.isEmpty()) {
+            status.text = "No directly connected peers are available to invite"
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Invite to #${group.name}")
+            .setItems(peers.map { it.nickname }.toTypedArray()) { _, index ->
+                peers.getOrNull(index)?.let { peer ->
+                    try {
+                        meshService?.inviteGroupMember(group.groupId, peer.id)
+                        meshService?.groups()?.firstOrNull { it.groupId.contentEquals(group.groupId) }
+                            ?.let(::openGroupChat)
+                    } catch (error: Exception) {
+                        status.text = error.message ?: "Could not invite peer"
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmLeaveGroup(group: MeshGroup) {
+        AlertDialog.Builder(this)
+            .setTitle("Leave #${group.name}?")
+            .setMessage("This removes the group and its key from this device.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Leave") { _, _ ->
+                meshService?.leaveGroup(group.groupId)
+                groupConversations.remove(group.conversationId)
+                showNearbyRoom()
+            }
+            .show()
+    }
+
+    private fun openPendingConversation() {
+        val conversationId = pendingConversationId ?: return
+        if (conversationId.startsWith("group_")) {
+            val groupId = conversationId.removePrefix("group_").decodeHex() ?: return
+            val group = meshService?.groups()?.firstOrNull { it.groupId.contentEquals(groupId) } ?: return
+            pendingConversationId = null
+            openGroupChat(group)
+        } else {
+            val peer = currentPeers.firstOrNull { it.id == conversationId } ?: return
+            pendingConversationId = null
+            openPrivateChat(peer)
+        }
+    }
+
+    private fun openPrivateChat(peer: MeshPeer) {
+        selectedPrivatePeer = peer
+        selectedGroup = null
+        updateRoomHeader()
+        privateChatAction.text = "Back to Nearby"
+        privateChatAction.setOnClickListener { showNearbyRoom() }
+        groupAction.text = "Groups"
+        groupAction.setOnClickListener { showGroupPicker() }
+        messageInput.hint = "Private message to ${peer.nickname}"
+        renderTranscript()
+        transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun showNearbyRoom() {
+        selectedPrivatePeer = null
+        selectedGroup = null
+        updateRoomHeader()
+        privateChatAction.text = "Start a private chat"
+        privateChatAction.setOnClickListener { showPeerPicker() }
+        groupAction.text = "Groups"
+        groupAction.setOnClickListener { showGroupPicker() }
+        messageInput.hint = "Message the nearby group"
+        renderTranscript()
+        transcriptScroll.post { transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun updateRoomHeader() {
+        val peer = selectedPrivatePeer
+        val group = selectedGroup
+        if (group != null) {
+            roomCategory.text = "PRIVATE · CREATOR-MANAGED GROUP"
+            roomTitle.text = group.name
+            roomDescription.text = "${group.members.size} members · encrypted on this device and in transit"
+        } else if (peer == null) {
+            roomCategory.text = "Nearby"
+            roomTitle.text = "Shared mesh chat"
+            roomDescription.text = "One public room across nearby BitChat devices"
+        } else {
+            roomCategory.text = "PRIVATE · END-TO-END ENCRYPTED"
+            roomTitle.text = peer.nickname
+            roomDescription.text = "Direct Noise-encrypted chat over the mesh"
+        }
+    }
+
+    private fun String.decodeHex(): ByteArray? {
+        if (length % 2 != 0 || any { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }) return null
+        return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
     private fun requestMeshPermissions() {
@@ -638,6 +945,7 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
 
     private fun startAndBindMesh() {
         if (!hasMeshPermissions()) return
+        requestMessageNotificationPermission()
         val bluetoothAdapter = getSystemService(BluetoothManager::class.java)?.adapter
         if (bluetoothAdapter?.isEnabled == false) {
             status.text = "Bluetooth is off"
@@ -651,6 +959,16 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
         } catch (_: SecurityException) {
             status.text = "Bluetooth permission is needed to start mesh chat"
         }
+    }
+
+    private fun requestMessageNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) return
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(NOTIFICATION_PROMPTED, false)) return
+        prefs.edit().putBoolean(NOTIFICATION_PROMPTED, true).apply()
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
@@ -713,6 +1031,8 @@ class MainActivity : Activity(), MeshForegroundService.Listener {
 
     companion object {
         private const val REQUEST_PERMISSIONS = 1301
+        private const val REQUEST_NOTIFICATION_PERMISSION = 1304
+        private const val NOTIFICATION_PROMPTED = "message_notifications_prompted"
         private const val REQUEST_ENABLE_BLUETOOTH = 1302
         private const val REQUEST_PHOTO = 1303
         private const val MAX_TRANSCRIPT_MESSAGES = 200

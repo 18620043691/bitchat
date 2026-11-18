@@ -426,6 +426,27 @@ private struct ContentPeopleListView: View {
                             onTapGroup: { peerID in
                                 peerListModel.startConversation(with: peerID)
                                 showSidebar = true
+                            },
+                            onPerformAction: { request, value in
+                                switch request.action {
+                                case .create:
+                                    return peerListModel.createGroup(named: value)
+                                case .invite:
+                                    guard let group = request.group else {
+                                        return .error(message: String(localized: "system.group.not_in_group"))
+                                    }
+                                    return peerListModel.inviteGroupMember(to: group.peerID, nickname: value)
+                                case .remove:
+                                    guard let group = request.group else {
+                                        return .error(message: String(localized: "system.group.not_in_group"))
+                                    }
+                                    return peerListModel.removeGroupMember(from: group.peerID, nickname: value)
+                                case .leave:
+                                    guard let group = request.group else {
+                                        return .error(message: String(localized: "system.group.not_in_group"))
+                                    }
+                                    return peerListModel.leaveGroup(group.peerID)
+                                }
                             }
                         )
                         // Conversations with people no roster above lists

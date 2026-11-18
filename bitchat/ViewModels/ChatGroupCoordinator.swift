@@ -187,12 +187,12 @@ final class ChatGroupCoordinator {
         ))
     }
 
-    func inviteMember(nickname rawNickname: String) -> CommandResult {
+    func inviteMember(nickname rawNickname: String, in groupPeerID: PeerID? = nil) -> CommandResult {
         let nickname = normalizedNickname(rawNickname)
         guard !nickname.isEmpty else {
             return .error(message: String(localized: "system.group.usage_invite", comment: "Usage hint for /group invite"))
         }
-        guard let group = selectedGroup() else {
+        guard let group = group(for: groupPeerID) else {
             return .error(message: String(localized: "system.group.not_in_group", comment: "Error when a group command requires an open group chat"))
         }
         guard group.creatorFingerprint == context.myNoiseFingerprint() else {
@@ -263,12 +263,12 @@ final class ChatGroupCoordinator {
     /// Creator-side removal: rotates the group key (epoch + 1) and sends the
     /// new state to every remaining member so the removed member's key stops
     /// decrypting future traffic.
-    func removeMember(nickname rawNickname: String) -> CommandResult {
+    func removeMember(nickname rawNickname: String, in groupPeerID: PeerID? = nil) -> CommandResult {
         let nickname = normalizedNickname(rawNickname)
         guard !nickname.isEmpty else {
             return .error(message: String(localized: "system.group.usage_remove", comment: "Usage hint for /group remove"))
         }
-        guard let group = selectedGroup() else {
+        guard let group = group(for: groupPeerID) else {
             return .error(message: String(localized: "system.group.not_in_group", comment: "Error when a group command requires an open group chat"))
         }
         guard group.creatorFingerprint == context.myNoiseFingerprint() else {
@@ -301,13 +301,15 @@ final class ChatGroupCoordinator {
         ))
     }
 
-    func leaveGroup() -> CommandResult {
-        guard let group = selectedGroup() else {
+    func leaveGroup(in groupPeerID: PeerID? = nil) -> CommandResult {
+        guard let group = group(for: groupPeerID) else {
             return .error(message: String(localized: "system.group.not_in_group", comment: "Error when a group command requires an open group chat"))
         }
         // Close the chat window first so the confirmation message doesn't
         // resurrect the conversation we're about to remove.
-        context.endPrivateChat()
+        if context.selectedPrivateChatPeer == group.peerID {
+            context.endPrivateChat()
+        }
         context.removePrivateChat(group.peerID)
         context.groupStore.removeGroup(withID: group.groupID)
         context.notifyUIChanged()
@@ -493,6 +495,11 @@ private extension ChatGroupCoordinator {
     func selectedGroup() -> BitchatGroup? {
         guard let selected = context.selectedPrivateChatPeer, selected.isGroup else { return nil }
         return context.groupStore.group(for: selected)
+    }
+
+    private func group(for groupPeerID: PeerID?) -> BitchatGroup? {
+        guard let groupPeerID else { return selectedGroup() }
+        return context.groupStore.group(for: groupPeerID)
     }
 
     func signedStatePayload(for group: BitchatGroup, key: Data) -> Data? {

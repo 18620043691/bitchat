@@ -108,6 +108,22 @@ final class PeerListModel: ObservableObject {
         chatViewModel.startPrivateChat(with: peerID)
     }
 
+    func createGroup(named name: String) -> CommandResult {
+        chatViewModel.groupCoordinator.createGroup(named: name)
+    }
+
+    func inviteGroupMember(to groupPeerID: PeerID, nickname: String) -> CommandResult {
+        chatViewModel.groupCoordinator.inviteMember(nickname: nickname, in: groupPeerID)
+    }
+
+    func removeGroupMember(from groupPeerID: PeerID, nickname: String) -> CommandResult {
+        chatViewModel.groupCoordinator.removeMember(nickname: nickname, in: groupPeerID)
+    }
+
+    func leaveGroup(_ groupPeerID: PeerID) -> CommandResult {
+        chatViewModel.groupCoordinator.leaveGroup(in: groupPeerID)
+    }
+
     func toggleFavorite(peerID: PeerID) {
         chatViewModel.toggleFavorite(peerID: peerID)
     }
