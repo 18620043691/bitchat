@@ -62,6 +62,8 @@ struct AppInfoView: View {
             static let tabInfo = String(localized: "app_info.tab.info", defaultValue: "info", comment: "Segmented control label for the info pane of the app info sheet")
 
             static let connectivityTitle = String(localized: "app_info.settings.connectivity.title", defaultValue: "CONNECTIVITY", comment: "Section header (uppercase) for the connectivity toggles: mesh bridge, internet gateway, tor routing")
+            static let supportTitle = String(localized: "app_info.settings.support.title", defaultValue: "SUPPORT & UPDATES", comment: "Section header for user-created diagnostic reports and manual release checks")
+            static let profileTitle = String(localized: "app_info.settings.profile.title", defaultValue: "PROFILE", comment: "Section header for the user's display name and local profile photo")
 
             static let languageTitle = String(localized: "app_info.settings.language.title", defaultValue: "LANGUAGE", comment: "Section header (uppercase) for the app language picker in settings")
             static let languagePickerLabel = String(localized: "app_info.settings.language.picker_label", defaultValue: "app language", comment: "Label of the app language picker row in settings")
@@ -402,6 +404,24 @@ struct AppInfoView: View {
                     }
                 }
             }
+
+            #if os(iOS)
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(verbatim: Strings.Settings.profileTitle)
+                settingsCard {
+                    ProfileSettingsView()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(verbatim: Strings.Settings.supportTitle)
+                settingsCard {
+                    ReleaseUpdatesView()
+                    Divider()
+                    DiagnosticFeedbackView()
+                }
+            }
+            #endif
 
             // Voice — same card + IRC pill as every other toggle setting.
             VStack(alignment: .leading, spacing: 12) {

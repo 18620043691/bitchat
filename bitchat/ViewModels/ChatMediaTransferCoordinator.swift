@@ -613,6 +613,7 @@ final class ChatMediaTransferCoordinator {
                     self.handleMediaSendFailure(messageID: messageID, reason: String(localized: "content.delivery.reason.voice_too_large", comment: "Failure reason shown when a voice note exceeds the size limit"))
                 }
             } catch {
+                DiagnosticEventStore.record(.media)
                 SecureLogger.error("Voice note send failed: \(error)", category: .session)
                 await MainActor.run { [weak self, barrier] in
                     guard let self,
@@ -653,6 +654,7 @@ final class ChatMediaTransferCoordinator {
                     self.sendImage(from: processedURL)
                 }
             } catch {
+                DiagnosticEventStore.record(.media)
                 SecureLogger.error("Image processing failed: \(error)", category: .session)
             }
         }
@@ -684,6 +686,7 @@ final class ChatMediaTransferCoordinator {
                     self.sendImage(from: processedURL)
                 }
             } catch {
+                DiagnosticEventStore.record(.media)
                 SecureLogger.error("Image processing failed: \(error)", category: .session)
             }
         }
@@ -704,6 +707,7 @@ final class ChatMediaTransferCoordinator {
         do {
             try ImageUtils.validateImageSource(at: sourceURL)
         } catch {
+            DiagnosticEventStore.record(.media)
             SecureLogger.error("Image send preparation failed: \(error)", category: .session)
             context.addSystemMessage("Failed to prepare image for sending.")
             return
@@ -767,6 +771,7 @@ final class ChatMediaTransferCoordinator {
                     self.context.addSystemMessage("Image is too large to send.")
                 }
             } catch {
+                DiagnosticEventStore.record(.media)
                 SecureLogger.error("Image send preparation failed: \(error)", category: .session)
                 await MainActor.run { [weak self, barrier] in
                     guard let self,

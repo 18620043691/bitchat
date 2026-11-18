@@ -4,6 +4,10 @@
 <dict>
 	<key>AppGroupID</key>
 	<string>$(APP_GROUP_ID)</string>
+	<key>BitchatUpdateManifestURL</key>
+	<string>$(BITCHAT_UPDATE_MANIFEST_URL)</string>
+	<key>BitchatUpdateSigningPublicKey</key>
+	<string>$(BITCHAT_UPDATE_SIGNING_PUBLIC_KEY)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

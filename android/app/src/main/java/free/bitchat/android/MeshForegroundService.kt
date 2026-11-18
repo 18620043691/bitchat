@@ -10,6 +10,9 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.Handler
+import java.io.File
+import java.util.UUID
+import java.util.concurrent.Executors
 
 class MeshForegroundService : Service() {
     interface Listener {
@@ -25,6 +28,7 @@ class MeshForegroundService : Service() {
 
     private val binder = LocalBinder()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val mediaExecutor = Executors.newSingleThreadExecutor()
     private val listeners = linkedSetOf<Listener>()
     private var engine: MeshProtocolEngine? = null
     private var transport: BleMeshTransport? = null
@@ -45,6 +49,7 @@ class MeshForegroundService : Service() {
         transport?.stop()
         transport = null
         engine = null
+        mediaExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -64,6 +69,22 @@ class MeshForegroundService : Service() {
         activeTransport.sendText(text)
     }
 
+    fun sendImage(fileName: String, mimeType: String, content: ByteArray) {
+        val activeTransport = transport ?: error("Bluetooth mesh is not ready.")
+        val extension = imageExtension(mimeType) ?: throw IllegalArgumentException("Choose a supported image.")
+        require(content.size <= MeshFilePacket.MAX_IMAGE_BYTES && MeshFilePacket.isImage(mimeType, content)) {
+            "Image must be a supported format and no larger than 512 KB."
+        }
+        val imageFile = File(File(filesDir, "sent-images").apply { mkdirs() }, "${UUID.randomUUID()}.$extension")
+        imageFile.writeBytes(content)
+        try {
+            activeTransport.sendImage(fileName, mimeType, content, imageFile.absolutePath)
+        } catch (error: Exception) {
+            imageFile.delete()
+            throw error
+        }
+    }
+
     fun localNickname(): String = engine?.nickname() ?: "Android"
 
     fun changeNickname(nickname: String) {
@@ -77,17 +98,22 @@ class MeshForegroundService : Service() {
             val identity = store.loadOrCreate()
             val mesh = MeshProtocolEngine(
                 identity = identity,
-                onMessage = { message -> listeners.toList().forEach { it.onMessage(message) } },
+                onMessage = { message ->
+                    mainHandler.post { listeners.toList().forEach { it.onMessage(message) } }
+                },
                 onPeersChanged = { peers ->
-                    activePeers = peers
-                    listeners.toList().forEach { it.onPeersChanged(peers) }
+                    mainHandler.post {
+                        activePeers = peers
+                        listeners.toList().forEach { it.onPeersChanged(peers) }
+                    }
                 },
                 onRelay = { relay ->
                     mainHandler.postDelayed({ transport?.relay(relay) }, relay.delayMs)
                 },
                 peerAddresses = { peerId -> transport?.peerAddresses(peerId) ?: emptySet() },
                 initialSigningKeys = store.loadPeerPins(),
-                onPeerPinned = store::savePeerPin
+                onPeerPinned = store::savePeerPin,
+                onImage = ::handleImage
             )
             mesh.setNickname(store.nickname(identity))
             engine = mesh
@@ -97,8 +123,10 @@ class MeshForegroundService : Service() {
                 object : BleMeshTransport.Listener {
                     override fun onStatus(status: String) = updateStatus(status)
                     override fun onLinkCountChanged(count: Int) {
-                        linkCount = count
-                        listeners.toList().forEach { it.onLinkCountChanged(count) }
+                        mainHandler.post {
+                            linkCount = count
+                            listeners.toList().forEach { it.onLinkCountChanged(count) }
+                        }
                     }
 
                     override fun onPacket(packet: MeshPacket, address: String) {
@@ -119,9 +147,40 @@ class MeshForegroundService : Service() {
     }
 
     private fun updateStatus(status: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { updateStatus(status) }
+            return
+        }
         statusText = status
         listeners.toList().forEach { it.onStatus(status) }
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+    }
+
+    private fun handleImage(image: MeshImageTransfer) {
+        if (image.localPath != null) {
+            val message = image.message
+            mainHandler.post { listeners.toList().forEach { it.onMessage(message) } }
+            return
+        }
+        mediaExecutor.execute {
+            try {
+                val extension = imageExtension(image.mimeType) ?: return@execute
+                val destination = File(File(filesDir, "received-images").apply { mkdirs() }, "${UUID.randomUUID()}.$extension")
+                destination.writeBytes(image.content)
+                val message = image.message.copy(imagePath = destination.absolutePath)
+                mainHandler.post { listeners.toList().forEach { it.onMessage(message) } }
+            } catch (_: Exception) {
+                mainHandler.post { updateStatus("An incoming image could not be saved") }
+            }
+        }
+    }
+
+    private fun imageExtension(mimeType: String): String? = when (mimeType.lowercase()) {
+        "image/jpeg", "image/jpg" -> "jpg"
+        "image/png" -> "png"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        else -> null
     }
 
     private fun createNotificationChannel() {

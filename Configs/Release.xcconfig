@@ -10,3 +10,7 @@ CODE_SIGN_STYLE = Automatic
 
 PRODUCT_BUNDLE_IDENTIFIER = chat.bitchat
 APP_GROUP_ID = group.chat.bitchat
+
+// Configure both values only after publishing a signed release manifest.
+BITCHAT_UPDATE_MANIFEST_URL =
+BITCHAT_UPDATE_SIGNING_PUBLIC_KEY =

@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.security.SecureRandom
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 
 class MeshProtocolTest {
     @Test
@@ -75,6 +76,45 @@ class MeshProtocolTest {
                 identity.signingPublic
             )
         )
+    }
+
+    @Test
+    fun imageTlvRoundTripsAndRejectsMimeMagicMismatch() {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1, 2, 3)
+        val file = MeshFilePacket("img_test.jpg", "image/jpeg", jpeg)
+
+        assertEquals(jpeg.hex(), MeshFilePacket.decode(file.encode())?.content?.hex())
+        assertEquals("img_test.jpg", MeshFilePacket.decode(file.encode())?.fileName)
+        assertEquals(null, MeshFilePacket.decode(MeshFilePacket("bad.png", "image/png", jpeg).encode()))
+    }
+
+    @Test
+    fun imageTlvMatchesTheIosCanonicalEncoding() {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+        val packet = MeshFilePacket("img_test.jpg", "image/jpeg", jpeg)
+
+        assertEquals(
+            "01000c696d675f746573742e6a7067" +
+                "02000400000003" +
+                "03000a696d6167652f6a706567" +
+                "0400000003ffd8ff",
+            packet.encode().hex()
+        )
+    }
+
+    @Test
+    fun releaseMetadataSignatureRejectsPayloadTampering() {
+        val privateKey = org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(SecureRandom())
+        val payload = """{"version":"2.0.0"}""".toByteArray()
+        val signer = Ed25519Signer().apply {
+            init(true, privateKey)
+            update(payload, 0, payload.size)
+        }
+        val signature = signer.generateSignature()
+        val publicKey = privateKey.generatePublicKey().encoded
+
+        assertTrue(ReleaseSignatureVerifier.verify(payload, signature, publicKey))
+        assertFalse(ReleaseSignatureVerifier.verify(payload + 0x20, signature, publicKey))
     }
 
     @Test

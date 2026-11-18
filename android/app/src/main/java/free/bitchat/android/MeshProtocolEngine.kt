@@ -6,14 +6,23 @@ import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.LinkedHashMap
 
-internal data class MeshPeer(val id: String, val nickname: String, val connected: Boolean)
+data class MeshPeer(val id: String, val nickname: String, val connected: Boolean)
 
-internal data class MeshChatMessage(
+data class MeshChatMessage(
     val senderId: String,
     val nickname: String,
     val text: String,
     val timestamp: Long,
-    val isLocal: Boolean
+    val isLocal: Boolean,
+    val imagePath: String? = null
+)
+
+data class MeshImageTransfer(
+    val message: MeshChatMessage,
+    val fileName: String,
+    val mimeType: String,
+    val content: ByteArray,
+    val localPath: String? = null
 )
 
 internal data class MeshRelay(
@@ -31,7 +40,8 @@ internal class MeshProtocolEngine(
     private val peerAddresses: (String) -> Set<String>,
     private val nowMs: () -> Long = System::currentTimeMillis,
     initialSigningKeys: Map<String, ByteArray> = emptyMap(),
-    private val onPeerPinned: (String, ByteArray) -> Unit = { _, _ -> }
+    private val onPeerPinned: (String, ByteArray) -> Unit = { _, _ -> },
+    private val onImage: (MeshImageTransfer) -> Unit = {}
 ) {
     private data class Announcement(val nickname: String, val noiseKey: ByteArray, val signingKey: ByteArray)
     private data class FragmentSet(
@@ -98,9 +108,38 @@ internal class MeshProtocolEngine(
         return sign(unsigned)
     }
 
+    fun imagePacket(fileName: String, mimeType: String, content: ByteArray): MeshPacket {
+        require(MeshFilePacket.isImage(mimeType, content)) { "Choose a supported image." }
+        val payload = MeshFilePacket(fileName, mimeType, content).encode()
+        return sign(
+            MeshPacket(
+                type = MeshMessageType.FILE_TRANSFER,
+                senderId = identity.peerId,
+                timestamp = nowMs(),
+                payload = payload,
+                ttl = DEFAULT_TTL,
+                version = 2
+            )
+        )
+    }
+
     fun noteLocalMessage(packet: MeshPacket) {
         val text = packet.payload.toString(Charsets.UTF_8)
         onMessage(MeshChatMessage(localId, nickname(), text, packet.timestamp, true))
+        remember(dedupKey(packet))
+    }
+
+    fun noteLocalImage(packet: MeshPacket, imagePath: String) {
+        val file = MeshFilePacket.decode(packet.payload) ?: return
+        onImage(
+            MeshImageTransfer(
+                message = MeshChatMessage(localId, nickname(), "Image", packet.timestamp, true, imagePath),
+                fileName = file.fileName,
+                mimeType = file.mimeType,
+                content = file.content,
+                localPath = imagePath
+            )
+        )
         remember(dedupKey(packet))
     }
 
@@ -124,6 +163,7 @@ internal class MeshProtocolEngine(
         when (packet.type) {
             MeshMessageType.ANNOUNCE -> if (!acceptAnnouncement(packet, ingressAddress)) return
             MeshMessageType.MESSAGE -> if (!acceptMessage(packet)) return
+            MeshMessageType.FILE_TRANSFER -> if (!acceptImage(packet)) return
             MeshMessageType.FRAGMENT -> if (!receiveFragment(packet)) return
             else -> return
         }
@@ -171,6 +211,25 @@ internal class MeshProtocolEngine(
         return true
     }
 
+    private fun acceptImage(packet: MeshPacket): Boolean {
+        if (packet.recipientId != null || !timestampIsCurrent(packet.timestamp)) return false
+        val file = MeshFilePacket.decode(packet.payload) ?: return false
+        val peerId = packet.senderId.hex()
+        val signingKey = signingKeys[peerId] ?: return false
+        if (!identity.verify(MeshPacketCodec.signingBytes(packet) ?: return false, packet.signature ?: return false, signingKey)) {
+            return false
+        }
+        onImage(
+            MeshImageTransfer(
+                message = MeshChatMessage(peerId, nicknames[peerId] ?: peerId.take(8), "Image", packet.timestamp, false),
+                fileName = file.fileName,
+                mimeType = file.mimeType,
+                content = file.content
+            )
+        )
+        return true
+    }
+
     private fun receiveFragment(packet: MeshPacket): Boolean {
         val payload = packet.payload
         if (payload.size < FRAGMENT_HEADER_SIZE || packet.recipientId != null) return false
@@ -179,7 +238,11 @@ internal class MeshProtocolEngine(
         val index = input.short.toInt() and 0xFFFF
         val total = input.short.toInt() and 0xFFFF
         val originalType = input.get().toInt() and 0xFF
-        if (total !in 1..MAX_FRAGMENTS || index >= total || originalType != MeshMessageType.MESSAGE) return false
+        if (
+            total !in 1..MAX_FRAGMENTS ||
+            index >= total ||
+            originalType !in setOf(MeshMessageType.MESSAGE, MeshMessageType.FILE_TRANSFER)
+        ) return false
         if (!remember("fragment:${packet.senderId.hex()}:$id:$index")) return false
 
         val key = "${packet.senderId.hex()}:$id"
@@ -206,7 +269,12 @@ internal class MeshProtocolEngine(
             fragments.remove(key)
             val original = MeshPacketCodec.decode(fullFrame) ?: return false
             if (original.type != originalType || original.senderId.hex() != packet.senderId.hex()) return false
-            if (!acceptMessage(original)) return false
+            val accepted = when (original.type) {
+                MeshMessageType.MESSAGE -> acceptMessage(original)
+                MeshMessageType.FILE_TRANSFER -> acceptImage(original)
+                else -> false
+            }
+            if (!accepted) return false
             remember(dedupKey(original))
         }
         return true
@@ -329,7 +397,7 @@ internal class MeshProtocolEngine(
         private const val MAX_CLOCK_SKEW_MS = 120_000L
         private const val MAX_SEEN_PACKETS = 4096
         private const val FRAGMENT_HEADER_SIZE = 13
-        private const val MAX_FRAGMENTS = 256
+        private const val MAX_FRAGMENTS = 2_048
         private const val MAX_ASSEMBLIES = 32
         private const val MAX_REASSEMBLED_BYTES = 1_048_576
         private const val FRAGMENT_LIFETIME_MS = 60_000L

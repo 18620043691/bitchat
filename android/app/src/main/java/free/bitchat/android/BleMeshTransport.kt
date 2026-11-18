@@ -237,7 +237,7 @@ internal class BleMeshTransport(
         started = true
         scanner = bluetoothAdapter.bluetoothLeScanner
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
-        val server = manager?.openGattServer(appContext, serverCallback, mainHandler)
+        val server = manager?.openGattServer(appContext, serverCallback)
             ?: error("Unable to open the BLE GATT server.")
         gattServer = server
 
@@ -280,6 +280,17 @@ internal class BleMeshTransport(
             throw IllegalStateException("The Bluetooth send queues are full; message was not sent.")
         }
         engine.noteLocalMessage(packet)
+    }
+
+    fun sendImage(fileName: String, mimeType: String, content: ByteArray, localPath: String) {
+        if (clients.values.none { it.ready } && servers.values.none { it.subscribed }) {
+            throw IllegalStateException("No nearby Bluetooth peers are connected; image was not sent.")
+        }
+        val packet = engine.imagePacket(fileName, mimeType, content)
+        if (!sendPacket(packet)) {
+            throw IllegalStateException("The Bluetooth send queues are full; image was not sent.")
+        }
+        engine.noteLocalImage(packet, localPath)
     }
 
     fun changeNickname(nickname: String) {
@@ -498,7 +509,7 @@ internal class BleMeshTransport(
     private fun encodeForTransport(packet: MeshPacket): List<ByteArray> {
         val fullFrame = MeshPacketCodec.encode(packet) ?: return emptyList()
         if (fullFrame.size <= MAX_LINK_FRAME_BYTES) return listOf(fullFrame)
-        if (packet.type != MeshMessageType.MESSAGE || packet.version != 1) return emptyList()
+        if (packet.type !in setOf(MeshMessageType.MESSAGE, MeshMessageType.FILE_TRANSFER)) return emptyList()
         val chunkSize = FRAGMENT_CHUNK_BYTES
         val total = (fullFrame.size + chunkSize - 1) / chunkSize
         if (total !in 1..MAX_FRAGMENT_COUNT) return emptyList()
@@ -512,7 +523,7 @@ internal class BleMeshTransport(
                 write(index)
                 write(total ushr 8)
                 write(total)
-                write(MeshMessageType.MESSAGE)
+                write(packet.type)
                 write(fragmentData)
             }.toByteArray()
             val fragment = packet.copy(
@@ -697,7 +708,7 @@ internal class BleMeshTransport(
         private const val ATT_OVERHEAD = 3
         private const val MAX_LINK_FRAME_BYTES = 512
         private const val FRAGMENT_CHUNK_BYTES = 469
-        private const val MAX_FRAGMENT_COUNT = 256
+        private const val MAX_FRAGMENT_COUNT = 2_048
         private const val MAX_QUEUED_BYTES = 1_000_000
         private const val MAX_WRITE_RETRIES = 80
         private const val WRITE_RETRY_MS = 25L

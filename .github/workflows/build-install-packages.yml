@@ -3,7 +3,7 @@ name: Build install packages
 on:
   push:
     branches:
-      - 18620043691-android-ios-ble-mesh
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   android:
-    name: Android debug APK
+    name: Android release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,19 +31,21 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
       - name: Run unit tests and build APK
         working-directory: android
-        run: gradle testDebugUnitTest assembleDebug
+        run: gradle testDebugUnitTest assembleRelease
 
-      - name: Upload debug APK
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: bitchat-android-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: bitchat-android-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
 
@@ -55,11 +57,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Check out iOS app source
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref }}
+          path: ios-source
+          fetch-depth: 1
+
       - name: Build iOS app without signing
         run: |
           set -o pipefail
           xcodebuild \
-            -project bitchat.xcodeproj \
+            -project ios-source/bitchat.xcodeproj \
             -scheme "bitchat (iOS)" \
             -configuration Release \
             -sdk iphoneos \

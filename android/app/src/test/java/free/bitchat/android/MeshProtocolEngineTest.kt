@@ -5,6 +5,9 @@ import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.SecureRandom
 import java.util.Random
 
@@ -141,6 +144,92 @@ class MeshProtocolEngineTest {
 
         assertEquals(1, received.size)
         assertEquals(text, received.single().text)
+    }
+
+    @Test
+    fun fragmentedIosStylePublicImageIsAuthenticatedAndReceivedAfterReassembly() {
+        val now = 1_800_000_000_000L
+        val senderIdentity = newIdentity()
+        val sender = newEngine(senderIdentity, now).apply { setNickname("Photo sender") }
+        val received = mutableListOf<MeshImageTransfer>()
+        val relays = mutableListOf<MeshRelay>()
+        val receiver = MeshProtocolEngine(
+            identity = newIdentity(),
+            onMessage = {},
+            onPeersChanged = {},
+            onRelay = relays::add,
+            peerAddresses = { emptySet() },
+            nowMs = { now },
+            onImage = received::add
+        )
+        receiver.receive(sender.announcePacket(), "sender-link")
+
+        val content = ByteArray(18_000).also { Random(87).nextBytes(it) }
+            .also {
+                it[0] = 0xFF.toByte()
+                it[1] = 0xD8.toByte()
+                it[2] = 0xFF.toByte()
+            }
+        val image = sender.imagePacket("img_123.jpg", "image/jpeg", content)
+        val encoded = MeshPacketCodec.encode(image)!!
+        assertTrue("image fixture must require BLE fragmentation", encoded.size > 512)
+        val fragmentId = ByteArray(8) { (it + 1).toByte() }
+        val chunkSize = 469
+        val total = (encoded.size + chunkSize - 1) / chunkSize
+
+        repeat(total) { index ->
+            val chunk = encoded.copyOfRange(index * chunkSize, minOf((index + 1) * chunkSize, encoded.size))
+            val payload = ByteArrayOutputStream().apply {
+                write(fragmentId)
+                write(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putShort(index.toShort()).putShort(total.toShort()).array())
+                write(MeshMessageType.FILE_TRANSFER)
+                write(chunk)
+            }.toByteArray()
+            receiver.receive(
+                MeshPacket(
+                    type = MeshMessageType.FRAGMENT,
+                    senderId = senderIdentity.peerId,
+                    timestamp = image.timestamp,
+                    payload = payload,
+                    ttl = 7
+                ),
+                "sender-link"
+            )
+        }
+
+        assertEquals(1, received.size)
+        assertEquals("Photo sender", received.single().message.nickname)
+        assertEquals(content.hex(), received.single().content.hex())
+        assertTrue("all valid image fragments should continue through the mesh", relays.size >= total)
+    }
+
+    @Test
+    fun publicImageWithInvalidSignatureIsNotDeliveredOrRelayed() {
+        val now = 1_800_000_000_000L
+        val sender = newEngine(newIdentity(), now).apply { setNickname("Photo sender") }
+        val received = mutableListOf<MeshImageTransfer>()
+        val relays = mutableListOf<MeshRelay>()
+        val receiver = MeshProtocolEngine(
+            identity = newIdentity(),
+            onMessage = {},
+            onPeersChanged = {},
+            onRelay = relays::add,
+            peerAddresses = { emptySet() },
+            nowMs = { now },
+            onImage = received::add
+        )
+        receiver.receive(sender.announcePacket(), "sender-link")
+        relays.clear()
+        val packet = sender.imagePacket("img_123.jpg", "image/jpeg", byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1))
+        val alteredPayload = packet.payload.copyOf().also {
+            it[it.lastIndex] = (it.last().toInt() xor 1).toByte()
+        }
+        val forged = packet.copy(payload = alteredPayload)
+
+        receiver.receive(forged, "sender-link")
+
+        assertTrue(received.isEmpty())
+        assertTrue(relays.isEmpty())
     }
 
     private fun newEngine(identity: MeshIdentity, now: Long) = MeshProtocolEngine(

@@ -24,6 +24,119 @@ internal object MeshMessageType {
     const val MESSAGE = 0x02
     const val FRAGMENT = 0x20
     const val REQUEST_SYNC = 0x21
+    const val FILE_TRANSFER = 0x22
+}
+
+internal data class MeshFilePacket(
+    val fileName: String,
+    val mimeType: String,
+    val content: ByteArray
+) {
+    fun encode(): ByteArray {
+        val name = fileName.toByteArray(Charsets.UTF_8)
+        val mime = mimeType.toByteArray(Charsets.UTF_8)
+        require(name.isNotEmpty() && name.size <= 0xFFFF && fileName == fileName.substringAfterLast('/').substringAfterLast('\\'))
+        require(mime.isNotEmpty() && mime.size <= 0xFFFF)
+        require(content.isNotEmpty() && content.size <= MAX_IMAGE_BYTES && isImage(mimeType, content))
+
+        return ByteArrayOutputStream().apply {
+            writeTlv16(0x01, name)
+            write(0x02)
+            write(0)
+            write(4)
+            writeUnsigned(content.size.toLong(), 4)
+            writeTlv16(0x03, mime)
+            write(0x04)
+            writeUnsigned(content.size.toLong(), 4)
+            write(content)
+        }.toByteArray()
+    }
+
+    private fun ByteArrayOutputStream.writeTlv16(type: Int, value: ByteArray) {
+        write(type)
+        writeUnsigned(value.size.toLong(), 2)
+        write(value)
+    }
+
+    private fun ByteArrayOutputStream.writeUnsigned(value: Long, size: Int) {
+        for (shift in (size - 1) * 8 downTo 0 step 8) write(((value ushr shift) and 0xFF).toInt())
+    }
+
+    companion object {
+        const val MAX_IMAGE_BYTES = 512 * 1024
+
+        fun decode(payload: ByteArray): MeshFilePacket? {
+            var offset = 0
+            var fileName: String? = null
+            var mimeType: String? = null
+            var expectedSize: Long? = null
+            var content: ByteArray? = null
+
+            while (offset < payload.size) {
+                if (offset >= payload.size) return null
+                val type = payload[offset++].toInt() and 0xFF
+                val lengthSize = if (type == 0x04) 4 else 2
+                if (offset + lengthSize > payload.size) return null
+                var length = 0L
+                repeat(lengthSize) { length = (length shl 8) or (payload[offset++].toLong() and 0xFF) }
+                if (
+                    length > payload.size - offset ||
+                    length > Int.MAX_VALUE ||
+                    (type == 0x04 && length > MAX_IMAGE_BYTES)
+                ) return null
+                val value = payload.copyOfRange(offset, offset + length.toInt())
+                offset += length.toInt()
+
+                when (type) {
+                    0x01 -> {
+                        if (fileName != null) return null
+                        fileName = value.toString(Charsets.UTF_8).takeIf {
+                            it.isNotBlank() && it.toByteArray(Charsets.UTF_8).contentEquals(value) &&
+                                it == it.substringAfterLast('/').substringAfterLast('\\')
+                        } ?: return null
+                    }
+                    0x02 -> {
+                        if (expectedSize != null || value.size != 4) return null
+                        expectedSize = value.fold(0L) { result, byte ->
+                            (result shl 8) or (byte.toLong() and 0xFF)
+                        }
+                    }
+                    0x03 -> {
+                        if (mimeType != null) return null
+                        mimeType = value.toString(Charsets.UTF_8).takeIf {
+                            it.isNotBlank() && it.toByteArray(Charsets.UTF_8).contentEquals(value)
+                        } ?: return null
+                    }
+                    0x04 -> {
+                        if (content != null || value.size > MAX_IMAGE_BYTES) return null
+                        content = value
+                    }
+                }
+            }
+
+            val name = fileName ?: return null
+            val mime = mimeType ?: return null
+            val bytes = content ?: return null
+            if (bytes.isEmpty() || expectedSize != bytes.size.toLong() || !isImage(mime, bytes)) return null
+            return MeshFilePacket(name, mime, bytes)
+        }
+
+        fun isImage(mimeType: String, bytes: ByteArray): Boolean = when (mimeType.lowercase()) {
+            "image/jpeg", "image/jpg" ->
+                bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
+            "image/png" ->
+                bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
+                    byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+                )
+            "image/gif" ->
+                bytes.size >= 6 && (bytes.copyOfRange(0, 6).contentEquals("GIF87a".toByteArray()) ||
+                    bytes.copyOfRange(0, 6).contentEquals("GIF89a".toByteArray()))
+            "image/webp" ->
+                bytes.size >= 12 && bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
+                    bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray())
+            else -> false
+        }
+    }
 }
 
 internal object MeshPacketCodec {

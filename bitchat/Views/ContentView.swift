@@ -379,6 +379,7 @@ struct ContentView: View {
                 topologyProvider: { appChromeModel.meshTopologyDisplayModel() },
                 onPanicWipe: { appChromeModel.panicClearAllData() }
             )
+            .environmentObject(appChromeModel)
             .environmentObject(locationChannelsModel)
         }
         .sheet(isPresented: Binding(
