@@ -22,8 +22,8 @@ android {
         applicationId = "com.bitchat.droid"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 105
+        versionName = "1.05"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "UPDATE_MANIFEST_URL", buildConfigString(updateManifestUrl))
         buildConfigField("String", "UPDATE_SIGNING_PUBLIC_KEY", buildConfigString(updateSigningPublicKey))
